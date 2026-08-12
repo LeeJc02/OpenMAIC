@@ -323,20 +323,26 @@ export function recordAuditEvent(
   });
 }
 
-export function auditRequestId(req: { headers: Headers }): string {
-  const incoming = req.headers.get(AUDIT_RUN_HEADER);
+type AuditRequestHeaders = Pick<Headers, 'get'>;
+
+function requestHeaders(req: { headers?: AuditRequestHeaders }): AuditRequestHeaders {
+  return req.headers ?? new Headers();
+}
+
+export function auditRequestId(req: { headers?: AuditRequestHeaders }): string {
+  const incoming = requestHeaders(req).get(AUDIT_RUN_HEADER);
   return isValidAuditRunId(incoming) ? incoming : createAuditRunId();
 }
 
-export function auditAttempt(req: { headers: Headers }): number | undefined {
-  const value = req.headers.get(AUDIT_ATTEMPT_HEADER);
+export function auditAttempt(req: { headers?: AuditRequestHeaders }): number | undefined {
+  const value = requestHeaders(req).get(AUDIT_ATTEMPT_HEADER);
   if (!value) return undefined;
   const attempt = Number(value);
   return Number.isInteger(attempt) && attempt > 0 ? attempt : undefined;
 }
 
 export function startAuditRequest(
-  req: { headers: Headers },
+  req: { headers?: AuditRequestHeaders },
   options: AuditRequestOptions,
 ): AuditSpanHandle & { headers: Record<string, string> } {
   const auditRunId = auditRequestId(req);
@@ -375,7 +381,7 @@ export function applyAuditResponseHeaders<T extends Response>(
 }
 
 export async function withAuditedRequest<T extends Response>(
-  req: { headers: Headers },
+  req: { headers?: AuditRequestHeaders },
   options: AuditRequestOptions,
   callback: (audit: AuditSpanHandle) => Promise<T> | T,
 ): Promise<T> {
@@ -400,7 +406,7 @@ export async function withAuditedRequest<T extends Response>(
  * the stream helper after the generator terminates.
  */
 export async function withAuditedStreamRequest<T extends Response>(
-  req: { headers: Headers },
+  req: { headers?: AuditRequestHeaders },
   options: AuditRequestOptions,
   callback: (audit: AuditSpanHandle) => Promise<T> | T,
 ): Promise<T> {
