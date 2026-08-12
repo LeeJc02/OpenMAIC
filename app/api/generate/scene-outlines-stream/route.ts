@@ -39,6 +39,11 @@ import { createLogger } from '@/lib/logger';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 import { sortDocumentImagesForVision } from '@/lib/document/bundle';
 import { resolveVocationalActive } from '@/lib/config/feature-flags';
+import {
+  withAuditContext,
+  withAuditedStreamRequest,
+  type AuditSpanHandle,
+} from '@/lib/observability/audit';
 const log = createLogger('Outlines Stream');
 
 export const maxDuration = 300;
@@ -284,6 +289,14 @@ function ensureUniqueOutlineId(outline: SceneOutline, usedIds: Set<string>): Sce
 }
 
 export async function POST(req: NextRequest) {
+  return withAuditedStreamRequest(
+    req,
+    { module: 'generation', operation: 'generation.scene-outlines-stream' },
+    (audit) => post(req, audit),
+  );
+}
+
+async function post(req: NextRequest, audit: AuditSpanHandle) {
   let requirementSnippet: string | undefined;
   let resolvedModelString: string | undefined;
   try {
@@ -433,6 +446,7 @@ export async function POST(req: NextRequest) {
         // generation and must not be allowed to grow the heap unbounded.
         const MAX_OUTLINE_STREAM_BYTES = 512 * 1024;
 
+        let streamError: unknown;
         try {
           startHeartbeat();
 
@@ -472,10 +486,10 @@ export async function POST(req: NextRequest) {
               languageDirective = null;
               courseTitle = null;
               const usedOutlineIds = new Set<string>();
-              const textStream = streamLLM(
-                streamParams,
-                'scene-outlines-stream',
-                thinkingConfig,
+              const textStream = audit.run(() =>
+                withAuditContext({ attempt }, () =>
+                  streamLLM(streamParams, 'scene-outlines-stream', thinkingConfig),
+                ),
               ).textStream;
 
               for await (const chunk of textStream) {
@@ -630,6 +644,7 @@ export async function POST(req: NextRequest) {
             controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
           }
         } catch (error) {
+          streamError = error;
           const errorEvent = JSON.stringify({
             type: 'error',
             error: error instanceof Error ? error.message : String(error),
@@ -637,6 +652,15 @@ export async function POST(req: NextRequest) {
           controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
         } finally {
           stopHeartbeat();
+          audit.end({
+            status: req.signal?.aborted ? 'aborted' : streamError ? 'error' : 'completed',
+            eventType: req.signal?.aborted
+              ? 'sse.aborted'
+              : streamError
+                ? 'sse.error'
+                : 'sse.completed',
+            ...(streamError ? { error: streamError } : {}),
+          });
           // The controller may already be closed if the client disconnected.
           try {
             controller.close();

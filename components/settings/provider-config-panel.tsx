@@ -37,6 +37,7 @@ import type { ProviderConfig } from '@/lib/ai/providers';
 import type { ProvidersConfig } from '@/lib/types/settings';
 import { createVerifyModelRequest, formatContextWindow } from './utils';
 import { cn } from '@/lib/utils';
+import { beginAuditRun, getAuditHeaders } from '@/lib/observability/audit-client';
 
 interface ProviderConfigPanelProps {
   provider: ProviderConfig;
@@ -133,9 +134,13 @@ export function ProviderConfigPanel({
     const testModelId = availableModels[0].id;
 
     try {
+      beginAuditRun('verification');
       const response = await fetch('/api/verify-model', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuditHeaders('verification'),
+        },
         body: JSON.stringify(
           createVerifyModelRequest({
             providerId: provider.id,
@@ -170,9 +175,13 @@ export function ProviderConfigPanel({
     setFetchStatus('fetching');
     setFetchMessage('');
     try {
+      beginAuditRun('verification');
       const response = await fetch('/api/provider/probe-models', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuditHeaders('verification'),
+        },
         body: JSON.stringify({ baseUrl: effectiveBaseUrl, apiKey, modelsUrl }),
       });
       const data = await response.json();

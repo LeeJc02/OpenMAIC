@@ -10,6 +10,7 @@ import { callLLM } from '@/lib/ai/llm';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
+import { withAuditedRequest } from '@/lib/observability/audit';
 const log = createLogger('Quiz Grade');
 
 interface GradeRequest {
@@ -26,6 +27,12 @@ interface GradeResponse {
 }
 
 export async function POST(req: NextRequest) {
+  return withAuditedRequest(req, { module: 'generation', operation: 'generation.quiz-grade' }, () =>
+    post(req),
+  );
+}
+
+async function post(req: NextRequest) {
   let questionSnippet: string | undefined;
   let resolvedPoints: number | undefined;
   try {

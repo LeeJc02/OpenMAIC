@@ -12,6 +12,7 @@ import type { EditingModel } from '@/lib/types/settings';
 import type { ProviderId } from '@/lib/ai/providers';
 import { cn } from '@/lib/utils';
 import { createVerifyModelRequest } from './utils';
+import { beginAuditRun, getAuditHeaders } from '@/lib/observability/audit-client';
 
 interface ModelEditDialogProps {
   open: boolean;
@@ -70,9 +71,13 @@ export function ModelEditDialog({
     setTestMessage('');
 
     try {
+      beginAuditRun('verification');
       const response = await fetch('/api/verify-model', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuditHeaders('verification'),
+        },
         body: JSON.stringify(
           createVerifyModelRequest({
             providerId,

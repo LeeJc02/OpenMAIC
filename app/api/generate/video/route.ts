@@ -29,11 +29,19 @@ import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 
+import { recordAuditEvent, withAuditedRequest } from '@/lib/observability/audit';
+
 const log = createLogger('VideoGeneration API');
 
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
+  return withAuditedRequest(request, { module: 'generation', operation: 'generation.video' }, () =>
+    post(request),
+  );
+}
+
+async function post(request: NextRequest) {
   try {
     const body = (await request.json()) as VideoGenerationOptions;
 
@@ -66,6 +74,10 @@ export async function POST(request: NextRequest) {
 
     const baseUrl = resolveVideoBaseUrl(providerId, clientBaseUrl);
 
+    recordAuditEvent('generation.video.request', {
+      input: { providerId, model: clientModel, prompt: body.prompt },
+    });
+
     // Normalize options against provider capabilities
     const options = normalizeVideoOptions(providerId, body);
 
@@ -79,6 +91,15 @@ export async function POST(request: NextRequest) {
       { providerId, apiKey, baseUrl, model: clientModel },
       options,
     );
+
+    recordAuditEvent('generation.video.response', {
+      output: {
+        hasUrl: Boolean(result.url),
+        width: result.width,
+        height: result.height,
+        duration: result.duration,
+      },
+    });
 
     log.info(
       `Video generated: url=${result.url ? 'yes' : 'no'}, ${result.width}x${result.height}, ${result.duration}s`,

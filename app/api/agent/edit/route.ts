@@ -16,6 +16,7 @@ import { buildToolset } from '@/lib/agent/tools/registry';
 import { callLLM } from '@/lib/ai/llm';
 import { createLogger } from '@/lib/logger';
 import type { SceneContext } from '@/lib/agent/tools/regenerate-scene-actions';
+import { withAuditedStreamRequest, type AuditSpanHandle } from '@/lib/observability/audit';
 
 const log = createLogger('MAIC Agent');
 
@@ -86,6 +87,14 @@ export async function POST(req: NextRequest) {
     return new Response('Not found', { status: 404 });
   }
 
+  return withAuditedStreamRequest(
+    req,
+    { module: 'generation', operation: 'generation.agent-edit' },
+    (audit) => post(req, audit),
+  );
+}
+
+async function post(req: NextRequest, audit: AuditSpanHandle) {
   const body = (await req.json()) as AgentEditBody & Record<string, unknown>;
   const message = (body.message ?? '').toString().trim();
   if (!message) {
@@ -179,10 +188,12 @@ export async function POST(req: NextRequest) {
       const unsubscribe = agent.subscribe((event) => {
         send(event);
       });
+      let streamError: unknown;
       try {
         await agent.prompt(message);
         await agent.waitForIdle();
       } catch (err) {
+        streamError = err;
         log.error(`agent run failed: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
         unsubscribe();
@@ -192,6 +203,11 @@ export async function POST(req: NextRequest) {
           /* ignore */
         }
         controller.close();
+        audit.end({
+          status: streamError ? 'error' : 'completed',
+          eventType: streamError ? 'sse.error' : 'sse.completed',
+          ...(streamError ? { error: streamError } : {}),
+        });
       }
     },
     cancel() {

@@ -23,11 +23,19 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { VOXCPM_AUTO_VOICE_ID, VOXCPM_TTS_PROVIDER_ID } from '@/lib/audio/voxcpm';
 
+import { recordAuditEvent, withAuditedRequest } from '@/lib/observability/audit';
+
 const log = createLogger('TTS API');
 
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
+  return withAuditedRequest(req, { module: 'generation', operation: 'generation.tts' }, () =>
+    post(req),
+  );
+}
+
+async function post(req: NextRequest) {
   let ttsProviderId: string | undefined;
   let ttsVoice: string | undefined;
   let audioId: string | undefined;
@@ -111,6 +119,16 @@ export async function POST(req: NextRequest) {
       providerOptions: ttsProviderOptions,
     };
 
+    recordAuditEvent('generation.tts.request', {
+      input: {
+        providerId: ttsProviderId,
+        model: config.modelId,
+        voice: ttsVoice,
+        audioId,
+        text,
+      },
+    });
+
     log.info(
       `Generating TTS: provider=${ttsProviderId}, model=${config.modelId || 'default'}, voice=${ttsVoice}, ` +
         `registeredVoiceId=${voxcpmRegisteredVoiceId || 'none'}, audioId=${audioId}, textLen=${text.length}`,
@@ -118,6 +136,10 @@ export async function POST(req: NextRequest) {
 
     // Generate audio
     const { audio, format } = await generateTTS(config, text);
+
+    recordAuditEvent('generation.tts.response', {
+      output: { format, bytes: audio.byteLength },
+    });
 
     void recordGenerationUsage({
       kind: 'tts',

@@ -11,6 +11,8 @@ import type {
 // Session state stored in sessionStorage
 export interface GenerationSessionState {
   sessionId: string;
+  /** Correlates every generation-stage request into one audit run. */
+  auditRunId?: string;
   requirements: UserRequirements;
   pdfText: string;
   documentSources?: SessionDocumentSource[];

@@ -55,6 +55,7 @@ import { useThinkingTimers } from './thinking-timers';
 import { useSceneRuntimeErrors } from '@/lib/store/scene-runtime-errors';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { editElementsApplyCorrectionKey } from './edit-elements-result';
+import { beginAuditRun, getAuditHeaders } from '@/lib/observability/audit-client';
 
 export interface UseAgentRuntimeOptions {
   scene?: { id: string; title: string };
@@ -560,6 +561,7 @@ export function useAgentRuntime(opts: UseAgentRuntimeOptions) {
         // a server-side provider, so the agent would 500 when no server key is
         // configured even though generation works with the user's own config.
         const cfg = getCurrentModelConfig();
+        beginAuditRun('editor');
         const res = await fetch('/api/agent/edit', {
           method: 'POST',
           headers: {
@@ -568,6 +570,7 @@ export function useAgentRuntime(opts: UseAgentRuntimeOptions) {
             'x-api-key': cfg.apiKey || '',
             'x-base-url': cfg.baseUrl || '',
             'x-provider-type': cfg.providerType || '',
+            ...getAuditHeaders('editor'),
           },
           body: JSON.stringify({
             message: userText,

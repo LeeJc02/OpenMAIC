@@ -28,11 +28,21 @@ import { resolveVocationalActive } from '@/lib/config/feature-flags';
 import { sortDocumentImagesForVision } from '@/lib/document/bundle';
 import { generatePBLV2Project } from '@/lib/pbl/v2/agents/planner';
 
+import { withAuditedRequest } from '@/lib/observability/audit';
+
 const log = createLogger('Scene Content API');
 
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
+  return withAuditedRequest(
+    req,
+    { module: 'generation', operation: 'generation.scene-content' },
+    () => post(req),
+  );
+}
+
+async function post(req: NextRequest) {
   let outlineTitle: string | undefined;
   let resolvedModelString: string | undefined;
   try {

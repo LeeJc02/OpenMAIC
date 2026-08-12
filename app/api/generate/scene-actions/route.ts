@@ -30,11 +30,21 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { llmApiError } from '@/lib/server/llm-error-response';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 
+import { withAuditedRequest } from '@/lib/observability/audit';
+
 const log = createLogger('Scene Actions API');
 
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  return withAuditedRequest(
+    req,
+    { module: 'generation', operation: 'generation.scene-actions' },
+    () => post(req),
+  );
+}
+
+async function post(req: NextRequest) {
   let outlineTitle: string | undefined;
   let resolvedModelString: string | undefined;
   try {

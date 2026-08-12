@@ -14,6 +14,8 @@ import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 import { AGENT_COLOR_PALETTE } from '@/lib/constants/agent-defaults';
 import { normalizeVoiceDesign } from '@/lib/audio/voice-design';
 
+import { withAuditedRequest } from '@/lib/observability/audit';
+
 const log = createLogger('Agent Profiles API');
 
 export const maxDuration = 120;
@@ -42,6 +44,14 @@ function stripCodeFences(text: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  return withAuditedRequest(
+    req,
+    { module: 'generation', operation: 'generation.agent-profiles' },
+    () => post(req),
+  );
+}
+
+async function post(req: NextRequest) {
   let stageName: string | undefined;
   let modelString: string | undefined;
   try {

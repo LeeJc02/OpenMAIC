@@ -21,6 +21,8 @@ import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 
+import { recordAuditEvent, withAuditedRequest } from '@/lib/observability/audit';
+
 const log = createLogger('Extract Document');
 const MAX_EXTRACT_DOCUMENT_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
@@ -105,6 +107,14 @@ function formatTimestamp(ms: number): string {
 }
 
 export async function POST(req: NextRequest) {
+  return withAuditedRequest(
+    req,
+    { module: 'generation', operation: 'generation.extract-document' },
+    () => post(req),
+  );
+}
+
+async function post(req: NextRequest) {
   let fileName: string | undefined;
   let resolvedProviderId: string | undefined;
   try {
@@ -151,6 +161,15 @@ export async function POST(req: NextRequest) {
         )}MB.`,
       );
     }
+
+    recordAuditEvent('generation.extract-document.request', {
+      input: {
+        fileName: documentFile.name,
+        fileSize: documentFile.size,
+        mimeType,
+        providerId: preferredProviderId,
+      },
+    });
 
     // Media (audio/video) takes the media extraction path → MediaArtifact,
     // flattened to the same text shape documents produce. Same route, same
@@ -319,6 +338,14 @@ export async function POST(req: NextRequest) {
       config,
     });
     const result = documentArtifactToParsedPdfContent(artifact);
+
+    recordAuditEvent('generation.extract-document.response', {
+      output: {
+        providerId: resolvedProviderId,
+        textLength: result.text.length,
+        imageCount: result.images?.length ?? 0,
+      },
+    });
 
     const resultWithMetadata: ParsedPdfContent = {
       ...result,

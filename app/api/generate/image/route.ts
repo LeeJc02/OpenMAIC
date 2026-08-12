@@ -32,6 +32,8 @@ import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 
+import { recordAuditEvent, withAuditedRequest } from '@/lib/observability/audit';
+
 const log = createLogger('ImageGeneration API');
 
 // The ComfyUI adapter polls up to GENERATION_TIMEOUT_MS (5 min) and real
@@ -42,6 +44,12 @@ const log = createLogger('ImageGeneration API');
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
+  return withAuditedRequest(request, { module: 'generation', operation: 'generation.image' }, () =>
+    post(request),
+  );
+}
+
+async function post(request: NextRequest) {
   try {
     const body = (await request.json()) as ImageGenerationOptions;
 
@@ -75,6 +83,10 @@ export async function POST(request: NextRequest) {
 
     const baseUrl = resolveImageBaseUrl(providerId, clientBaseUrl);
 
+    recordAuditEvent('generation.image.request', {
+      input: { providerId, model: clientModel, prompt: body.prompt },
+    });
+
     // Resolve dimensions from aspect ratio if not explicitly set
     if (!body.width && !body.height && body.aspectRatio) {
       const dims = aspectRatioToDimensions(body.aspectRatio);
@@ -88,6 +100,14 @@ export async function POST(request: NextRequest) {
     );
 
     const result = await generateImage({ providerId, apiKey, baseUrl, model: clientModel }, body);
+
+    recordAuditEvent('generation.image.response', {
+      output: {
+        hasUrl: Boolean(result.url),
+        width: result.width,
+        height: result.height,
+      },
+    });
 
     void recordGenerationUsage({
       kind: 'image',

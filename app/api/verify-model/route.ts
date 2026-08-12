@@ -3,9 +3,16 @@ import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { resolveModel } from '@/lib/server/resolve-model';
 import { callLLM } from '@/lib/ai/llm';
+import { withAuditedRequest } from '@/lib/observability/audit';
 const log = createLogger('Verify Model');
 
 export async function POST(req: NextRequest) {
+  return withAuditedRequest(req, { module: 'external', operation: 'model.verify' }, () =>
+    post(req),
+  );
+}
+
+async function post(req: NextRequest) {
   let model: string | undefined;
   try {
     const body = await req.json();

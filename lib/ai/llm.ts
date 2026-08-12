@@ -18,6 +18,13 @@ import {
   pickThinkingEffort,
   pickThinkingLevel,
 } from '@/lib/ai/thinking-config';
+import {
+  currentAuditContext,
+  hashAuditPayload,
+  isAuditEnabled,
+  startAuditSpan,
+  type AuditSpanHandle,
+} from '@/lib/observability/audit';
 const log = createLogger('LLM');
 
 // Re-export for external use
@@ -284,17 +291,41 @@ const DEFAULT_VALIDATE = (text: string) => text.trim().length > 0;
 // wherever it's transitively imported.
 // ---------------------------------------------------------------------------
 
-function buildUsageMeta(params: GenerateTextParams | StreamTextParams, source: string) {
+function buildUsageMeta(
+  params: GenerateTextParams | StreamTextParams,
+  source: string,
+  audit?: AuditSpanHandle,
+) {
   const rawModelId = getModelId(params);
   const providerId = getModelProviderId(params) ?? 'unknown';
   const modelId = getCanonicalModelId(providerId, rawModelId);
-  return { source, providerId, modelId, modelString: `${providerId}:${modelId}` };
+  const auditContext = isAuditEnabled() ? (audit?.context ?? currentAuditContext()) : undefined;
+  return {
+    source,
+    providerId,
+    modelId,
+    modelString: `${providerId}:${modelId}`,
+    ...(auditContext
+      ? {
+          auditRunId: auditContext.auditRunId,
+          ...(audit ? { traceId: audit.traceId, spanId: audit.spanId } : {}),
+        }
+      : {}),
+  };
 }
 
 /** Record one call's usage. Never throws. */
 function recordUsageSafe(
   rawUsage: unknown,
-  meta: { source: string; providerId: string; modelId: string; modelString: string },
+  meta: {
+    source: string;
+    providerId: string;
+    modelId: string;
+    modelString: string;
+    auditRunId?: string;
+    traceId?: string;
+    spanId?: string;
+  },
 ): void {
   void (async () => {
     try {
@@ -307,6 +338,9 @@ function recordUsageSafe(
         modelId: meta.modelId,
         modelString: meta.modelString,
         usage: normalizeUsage(rawUsage as never),
+        ...(meta.auditRunId ? { auditRunId: meta.auditRunId } : {}),
+        ...(meta.traceId ? { traceId: meta.traceId } : {}),
+        ...(meta.spanId ? { spanId: meta.spanId } : {}),
       });
     } catch (err) {
       log.warn('Usage capture failed (ignored):', err);
@@ -337,6 +371,28 @@ export async function callLLM<T extends GenerateTextParams>(
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const requestInfo = _extractRequestInfo(params);
+    const promptVersion = hashAuditPayload(requestInfo);
+    const auditContext = currentAuditContext();
+    const auditSpan = startAuditSpan({
+      name: `llm.${source}`,
+      node: 'llm',
+      context: {
+        module: auditContext?.module ?? 'external',
+        operation: source,
+        promptId: auditContext?.promptId ?? source,
+        promptVersion: auditContext?.promptVersion ?? promptVersion,
+        attempt,
+      },
+      attributes: {
+        'openmaic.llm.source': source,
+        'openmaic.llm.provider_id': getModelProviderId(params) ?? 'unknown',
+        'openmaic.llm.model_id': getModelId(params),
+        'openmaic.llm.attempt': attempt,
+        'openmaic.prompt.version': promptVersion,
+      },
+      input: requestInfo,
+    });
     try {
       // Resolve effective thinking config: per-call > global env > undefined
       const effectiveThinking = thinking ?? getGlobalThinkingConfig();
@@ -345,8 +401,8 @@ export async function callLLM<T extends GenerateTextParams>(
       // Wrap in thinkingContext so the custom fetch wrapper in providers.ts
       // can read the config and inject vendor-specific body params for
       // OpenAI-compatible providers.
-      const result = await thinkingContext.run(effectiveThinking, () =>
-        generateText(injectedParams),
+      const result = await auditSpan.run(() =>
+        thinkingContext.run(effectiveThinking, () => generateText(injectedParams)),
       );
 
       // Record before validating: every attempt that got this far was billed,
@@ -358,10 +414,17 @@ export async function callLLM<T extends GenerateTextParams>(
       // every earlier step would go unaccounted. `totalUsage` aggregates across
       // steps and equals `usage` for a single-step call. Mirrors streamLLM,
       // which already prefers the aggregate.
-      recordUsageSafe(result.totalUsage ?? result.usage, buildUsageMeta(params, source));
+      recordUsageSafe(result.totalUsage ?? result.usage, buildUsageMeta(params, source, auditSpan));
 
       // Validate result (only when retries are configured)
       if (validate && !validate(result.text)) {
+        auditSpan.end({
+          status: 'error',
+          eventType: 'llm.validation_failed',
+          output: { text: result.text, finishReason: result.finishReason },
+          usage: result.totalUsage ?? result.usage,
+          attributes: { validationFailed: true },
+        });
         log.warn(
           `[${source}] Validation failed (attempt ${attempt}/${maxAttempts}), ${attempt < maxAttempts ? 'retrying...' : 'giving up'}`,
         );
@@ -369,8 +432,13 @@ export async function callLLM<T extends GenerateTextParams>(
         continue;
       }
 
+      auditSpan.end({
+        output: { text: result.text, finishReason: result.finishReason },
+        usage: result.totalUsage ?? result.usage,
+      });
       return result;
     } catch (error) {
+      auditSpan.end({ status: 'error', error, eventType: 'llm.error' });
       lastError = error;
 
       if (attempt < maxAttempts) {
@@ -405,20 +473,57 @@ export function streamLLM<T extends StreamTextParams>(
 
   // Wrap onFinish to capture usage when the stream completes, preserving any
   // caller-supplied onFinish. totalUsage aggregates across steps.
-  const usageMeta = buildUsageMeta(params, source);
+  const requestInfo = _extractRequestInfo(params);
+  const promptVersion = hashAuditPayload(requestInfo);
+  const auditContext = currentAuditContext();
+  const auditSpan = startAuditSpan({
+    name: `llm.${source}`,
+    node: 'llm',
+    context: {
+      module: auditContext?.module ?? 'external',
+      operation: source,
+      promptId: auditContext?.promptId ?? source,
+      promptVersion: auditContext?.promptVersion ?? promptVersion,
+    },
+    attributes: {
+      'openmaic.llm.source': source,
+      'openmaic.llm.provider_id': getModelProviderId(params) ?? 'unknown',
+      'openmaic.llm.model_id': getModelId(params),
+      'openmaic.prompt.version': promptVersion,
+    },
+    input: requestInfo,
+  });
+  const usageMeta = buildUsageMeta(params, source, auditSpan);
   const callerOnFinish = (params as Record<string, unknown>).onFinish as
     | ((event: { totalUsage?: unknown; usage?: unknown }) => void | Promise<void>)
+    | undefined;
+  const callerOnError = (params as Record<string, unknown>).onError as
+    | ((event: unknown) => void | Promise<void>)
     | undefined;
   const wrappedParams = {
     ...params,
     onFinish: async (event: { totalUsage?: unknown; usage?: unknown }) => {
       recordUsageSafe(event.totalUsage ?? event.usage, usageMeta);
+      const result = event as { text?: unknown; finishReason?: unknown };
+      auditSpan.end({
+        output: { text: result.text, finishReason: result.finishReason },
+        usage: event.totalUsage ?? event.usage,
+      });
       if (callerOnFinish) await callerOnFinish(event);
+    },
+    onError: async (event: unknown) => {
+      auditSpan.end({ status: 'error', error: event, eventType: 'llm.error' });
+      if (callerOnError) await callerOnError(event);
     },
   } as T;
 
   const injectedParams = injectProviderOptions(wrappedParams, effectiveThinking);
-  const result = thinkingContext.run(effectiveThinking, () => streamText(injectedParams));
-
-  return result;
+  try {
+    return auditSpan.run(() =>
+      thinkingContext.run(effectiveThinking, () => streamText(injectedParams)),
+    );
+  } catch (error) {
+    auditSpan.end({ status: 'error', error, eventType: 'llm.error' });
+    throw error;
+  }
 }

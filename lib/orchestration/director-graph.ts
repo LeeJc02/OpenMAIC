@@ -40,6 +40,7 @@ import { getEffectiveActions } from './tool-schemas';
 import type { AgentTurnSummary, WhiteboardActionRecord } from './types';
 import { parseStructuredChunk, createParserState, finalizeParser } from './stateless-generate';
 import { createLogger } from '@/lib/logger';
+import { recordAuditEvent, withAuditSpan } from '@/lib/observability/audit';
 
 const log = createLogger('DirectorGraph');
 
@@ -100,7 +101,7 @@ function resolveAgent(state: OrchestratorStateType, agentId: string): AgentConfi
  *     turn 0 + triggerAgentId: dispatch trigger agent (skip LLM)
  *     otherwise: LLM decides next agent / USER / END
  */
-async function directorNode(
+async function directorNodeImpl(
   state: OrchestratorStateType,
   config: LangGraphRunnableConfig,
 ): Promise<Partial<OrchestratorStateType>> {
@@ -220,6 +221,52 @@ async function directorNode(
     log.error('[Director] Error:', error);
     return { shouldEnd: true };
   }
+}
+
+async function directorNode(
+  state: OrchestratorStateType,
+  config: LangGraphRunnableConfig,
+): Promise<Partial<OrchestratorStateType>> {
+  return withAuditSpan(
+    {
+      name: 'langgraph.director',
+      node: 'director',
+      context: {
+        module: 'langgraph',
+        operation: 'langgraph.director',
+        agentId: state.currentAgentId ?? undefined,
+        turnIndex: state.turnCount,
+      },
+      input: {
+        messages: state.messages,
+        storeState: state.storeState,
+        messageCount: state.messages.length,
+        availableAgentIds: state.availableAgentIds,
+        currentAgentId: state.currentAgentId,
+        shouldEnd: state.shouldEnd,
+      },
+      stateBefore: {
+        messages: state.messages,
+        storeState: state.storeState,
+        turnCount: state.turnCount,
+        currentAgentId: state.currentAgentId,
+        agentResponses: state.agentResponses,
+        whiteboardLedger: state.whiteboardLedger,
+      },
+    },
+    async () => {
+      const result = await directorNodeImpl(state, config);
+      recordAuditEvent('langgraph.director.output', {
+        output: result,
+        stateAfter: {
+          turnCount: state.turnCount,
+          currentAgentId: result.currentAgentId ?? state.currentAgentId,
+          shouldEnd: result.shouldEnd ?? state.shouldEnd,
+        },
+      });
+      return result;
+    },
+  );
 }
 
 function directorCondition(state: OrchestratorStateType): 'agent_generate' | typeof END {
@@ -431,7 +478,7 @@ async function runAgentGeneration(
 /**
  * Agent generate node — runs one agent, then loops back to director.
  */
-async function agentGenerateNode(
+async function agentGenerateNodeImpl(
   state: OrchestratorStateType,
   config: LangGraphRunnableConfig,
 ): Promise<Partial<OrchestratorStateType>> {
@@ -464,6 +511,53 @@ async function agentGenerateNode(
     whiteboardLedger: result.whiteboardActions,
     currentAgentId: null,
   };
+}
+
+async function agentGenerateNode(
+  state: OrchestratorStateType,
+  config: LangGraphRunnableConfig,
+): Promise<Partial<OrchestratorStateType>> {
+  return withAuditSpan(
+    {
+      name: 'langgraph.agent_generate',
+      node: 'agent_generate',
+      context: {
+        module: 'langgraph',
+        operation: 'langgraph.agent_generate',
+        agentId: state.currentAgentId ?? undefined,
+        turnIndex: state.turnCount,
+      },
+      input: {
+        messages: state.messages,
+        storeState: state.storeState,
+        messageCount: state.messages.length,
+        agentId: state.currentAgentId,
+        availableAgentIds: state.availableAgentIds,
+      },
+      stateBefore: {
+        messages: state.messages,
+        storeState: state.storeState,
+        turnCount: state.turnCount,
+        currentAgentId: state.currentAgentId,
+        agentResponses: state.agentResponses,
+        whiteboardLedger: state.whiteboardLedger,
+      },
+    },
+    async () => {
+      const result = await agentGenerateNodeImpl(state, config);
+      recordAuditEvent('langgraph.agent_generate.output', {
+        output: result,
+        stateAfter: {
+          turnCount: result.turnCount ?? state.turnCount,
+          currentAgentId: result.currentAgentId,
+          totalActions: result.totalActions,
+          agentResponses: result.agentResponses,
+          whiteboardLedger: result.whiteboardLedger,
+        },
+      });
+      return result;
+    },
+  );
 }
 
 // ==================== Graph Construction ====================

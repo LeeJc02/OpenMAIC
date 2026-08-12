@@ -26,9 +26,17 @@ import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
 import { resolveWebSearchRouteBaseUrl } from '@/lib/server/web-search-config';
 
+import { recordAuditEvent, withAuditedRequest } from '@/lib/observability/audit';
+
 const log = createLogger('WebSearch');
 
 export async function POST(req: NextRequest) {
+  return withAuditedRequest(req, { module: 'generation', operation: 'generation.web-search' }, () =>
+    post(req),
+  );
+}
+
+async function post(req: NextRequest) {
   let query: string | undefined;
   try {
     const body = await req.json();
@@ -156,6 +164,14 @@ export async function POST(req: NextRequest) {
       ...(providerId === 'claude'
         ? { claudeModelId: resolveWebSearchModel('claude', claudeModelId) }
         : {}),
+    });
+    recordAuditEvent('generation.web-search.response', {
+      output: {
+        answer: result.answer,
+        query: result.query,
+        sources: result.sources,
+        responseTime: result.responseTime,
+      },
     });
     const context = formatSearchResultsAsContext(result);
 

@@ -3,6 +3,7 @@ import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { fetchModels, ModelFetchError } from '@/lib/server/model-fetch';
+import { withAuditedRequest } from '@/lib/observability/audit';
 
 const log = createLogger('ProbeModels');
 
@@ -17,6 +18,12 @@ const NON_CHAT_PATTERN = /(tts|asr|whisper|embedding|rerank|mineru|image|video|v
  * a typed status so the UI can fall back to manual model entry.
  */
 export async function POST(req: NextRequest) {
+  return withAuditedRequest(req, { module: 'external', operation: 'provider.probe-models' }, () =>
+    post(req),
+  );
+}
+
+async function post(req: NextRequest) {
   try {
     const body = await req.json();
     const { baseUrl, apiKey, modelsUrl } = body as {

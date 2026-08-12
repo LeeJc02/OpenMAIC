@@ -28,6 +28,7 @@ import {
 } from './collect-stage-asset-refs';
 import { isGeneratedMediaPlaceholder } from './media-ref';
 import { slideMediaReferenceSlots } from './slide-media-slots';
+import { getAuditHeaders } from '@/lib/observability/audit-client';
 
 const log = createLogger('MediaOrchestrator');
 
@@ -904,6 +905,7 @@ async function callImageApi(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...getAuditHeaders('generation'),
       'x-image-provider': settings.imageProviderId || '',
       'x-image-model': settings.imageModelId || '',
       'x-api-key': providerConfig?.apiKey || '',
@@ -950,6 +952,7 @@ async function callVideoApi(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...getAuditHeaders('generation'),
       'x-video-provider': settings.videoProviderId || '',
       'x-video-model': settings.videoModelId || '',
       'x-api-key': providerConfig?.apiKey || '',

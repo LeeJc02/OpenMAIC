@@ -16,6 +16,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
+import { getAuditHeaders } from '@/lib/observability/audit-client';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('QuizView');
@@ -100,6 +101,7 @@ async function gradeShortAnswerQuestion(
     const modelConfig = getCurrentModelConfig();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...getAuditHeaders('generation'),
       'x-model': modelConfig.modelString,
       'x-api-key': modelConfig.apiKey,
     };

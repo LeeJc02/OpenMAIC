@@ -32,6 +32,7 @@ import {
   withGenerationRetry,
   type GenerationRetryOptions,
 } from '@openmaic/generation';
+import { mergeAuditHeaders, getAuditHeaders } from '@/lib/observability/audit-client';
 
 const log = createLogger('SceneGenerator');
 
@@ -71,32 +72,36 @@ type ClientRetryOptions<T> = Partial<
   Omit<GenerationRetryOptions<T>, 'label' | 'shouldRetryResult' | 'signal'>
 >;
 
-function getApiHeaders(): HeadersInit {
+function getApiHeaders(attempt?: number): HeadersInit {
   const config = getCurrentModelConfig();
   const settings = useSettingsStore.getState();
   const imageProviderConfig = settings.imageProvidersConfig?.[settings.imageProviderId];
   const videoProviderConfig = settings.videoProvidersConfig?.[settings.videoProviderId];
 
-  return {
-    'Content-Type': 'application/json',
-    'x-model': config.modelString || '',
-    'x-api-key': config.apiKey || '',
-    'x-base-url': config.baseUrl || '',
-    'x-provider-type': config.providerType || '',
-    // Image generation provider
-    'x-image-provider': settings.imageProviderId || '',
-    'x-image-model': settings.imageModelId || '',
-    'x-image-api-key': imageProviderConfig?.apiKey || '',
-    'x-image-base-url': imageProviderConfig?.baseUrl || '',
-    // Video generation provider
-    'x-video-provider': settings.videoProviderId || '',
-    'x-video-model': settings.videoModelId || '',
-    'x-video-api-key': videoProviderConfig?.apiKey || '',
-    'x-video-base-url': videoProviderConfig?.baseUrl || '',
-    // Media generation toggles
-    'x-image-generation-enabled': String(settings.imageGenerationEnabled ?? false),
-    'x-video-generation-enabled': String(settings.videoGenerationEnabled ?? false),
-  };
+  return mergeAuditHeaders(
+    {
+      'Content-Type': 'application/json',
+      'x-model': config.modelString || '',
+      'x-api-key': config.apiKey || '',
+      'x-base-url': config.baseUrl || '',
+      'x-provider-type': config.providerType || '',
+      // Image generation provider
+      'x-image-provider': settings.imageProviderId || '',
+      'x-image-model': settings.imageModelId || '',
+      'x-image-api-key': imageProviderConfig?.apiKey || '',
+      'x-image-base-url': imageProviderConfig?.baseUrl || '',
+      // Video generation provider
+      'x-video-provider': settings.videoProviderId || '',
+      'x-video-model': settings.videoModelId || '',
+      'x-video-api-key': videoProviderConfig?.apiKey || '',
+      'x-video-base-url': videoProviderConfig?.baseUrl || '',
+      // Media generation toggles
+      'x-image-generation-enabled': String(settings.imageGenerationEnabled ?? false),
+      'x-video-generation-enabled': String(settings.videoGenerationEnabled ?? false),
+    },
+    'generation',
+    attempt,
+  );
 }
 
 function withThinkingConfig<T extends Record<string, unknown>>(body: T): T {
@@ -165,10 +170,10 @@ export async function fetchSceneContent(
 ): Promise<SceneContentResult> {
   try {
     return await withGenerationRetry(
-      async () => {
+      async (attempt) => {
         const response = await fetch('/api/generate/scene-content', {
           method: 'POST',
-          headers: getApiHeaders(),
+          headers: getApiHeaders(attempt),
           body: JSON.stringify(withThinkingConfig(params)),
           signal,
         });
@@ -214,10 +219,10 @@ export async function fetchSceneActions(
 ): Promise<SceneActionsResult> {
   try {
     return await withGenerationRetry(
-      async () => {
+      async (attempt) => {
         const response = await fetch('/api/generate/scene-actions', {
           method: 'POST',
-          headers: getApiHeaders(),
+          headers: getApiHeaders(attempt),
           body: JSON.stringify(withThinkingConfig(params)),
           signal,
         });
@@ -286,10 +291,13 @@ export async function generateAndStoreTTS(
     language,
   });
   const data = await withGenerationRetry(
-    async () => {
+    async (attempt) => {
       const response = await fetch('/api/generate/tts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuditHeaders('generation', attempt),
+        },
         body: JSON.stringify({
           text,
           audioId: requestId,

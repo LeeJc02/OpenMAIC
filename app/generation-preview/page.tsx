@@ -56,6 +56,11 @@ import {
 } from './types';
 import { StepVisualizer } from './components/visualizers';
 import { resolveTaskEngineModeFromOutlineDoneEvent } from './vocational-mode';
+import {
+  beginAuditRun,
+  getAuditHeaders,
+  mergeAuditHeaders,
+} from '@/lib/observability/audit-client';
 
 const log = createLogger('GenerationPreview');
 const OUTLINE_REVIEW_AUTO_CONTINUE_MS = 2500;
@@ -267,26 +272,29 @@ function GenerationPreviewContent() {
     const settings = useSettingsStore.getState();
     const imageProviderConfig = settings.imageProvidersConfig?.[settings.imageProviderId];
     const videoProviderConfig = settings.videoProvidersConfig?.[settings.videoProviderId];
-    return {
-      'Content-Type': 'application/json',
-      'x-model': modelConfig.modelString,
-      'x-api-key': modelConfig.apiKey,
-      'x-base-url': modelConfig.baseUrl,
-      'x-provider-type': modelConfig.providerType || '',
-      // Image generation provider
-      'x-image-provider': settings.imageProviderId || '',
-      'x-image-model': settings.imageModelId || '',
-      'x-image-api-key': imageProviderConfig?.apiKey || '',
-      'x-image-base-url': imageProviderConfig?.baseUrl || '',
-      // Video generation provider
-      'x-video-provider': settings.videoProviderId || '',
-      'x-video-model': settings.videoModelId || '',
-      'x-video-api-key': videoProviderConfig?.apiKey || '',
-      'x-video-base-url': videoProviderConfig?.baseUrl || '',
-      // Media generation toggles
-      'x-image-generation-enabled': String(settings.imageGenerationEnabled ?? false),
-      'x-video-generation-enabled': String(settings.videoGenerationEnabled ?? false),
-    };
+    return mergeAuditHeaders(
+      {
+        'Content-Type': 'application/json',
+        'x-model': modelConfig.modelString,
+        'x-api-key': modelConfig.apiKey,
+        'x-base-url': modelConfig.baseUrl,
+        'x-provider-type': modelConfig.providerType || '',
+        // Image generation provider
+        'x-image-provider': settings.imageProviderId || '',
+        'x-image-model': settings.imageModelId || '',
+        'x-image-api-key': imageProviderConfig?.apiKey || '',
+        'x-image-base-url': imageProviderConfig?.baseUrl || '',
+        // Video generation provider
+        'x-video-provider': settings.videoProviderId || '',
+        'x-video-model': settings.videoModelId || '',
+        'x-video-api-key': videoProviderConfig?.apiKey || '',
+        'x-video-base-url': videoProviderConfig?.baseUrl || '',
+        // Media generation toggles
+        'x-image-generation-enabled': String(settings.imageGenerationEnabled ?? false),
+        'x-video-generation-enabled': String(settings.videoGenerationEnabled ?? false),
+      },
+      'generation',
+    );
   };
 
   const withThinkingConfig = <T extends Record<string, unknown>>(body: T) => {
@@ -324,8 +332,17 @@ function GenerationPreviewContent() {
     abortControllerRef.current = controller;
     const signal = controller.signal;
 
-    // Use a local mutable copy so we can update it after document extraction
-    let currentSession = generationSession;
+    // One generation attempt may cross document extraction, search, outline,
+    // agent, scene, media, and TTS endpoints. Persist one client-created ID so
+    // all of them can be reviewed together after the run.
+    const auditRunId = beginAuditRun('generation', generationSession.auditRunId);
+    let currentSession = generationSession.auditRunId
+      ? generationSession
+      : { ...generationSession, auditRunId };
+    if (!generationSession.auditRunId) {
+      setSession(currentSession);
+      sessionStorage.setItem('generationSession', JSON.stringify(currentSession));
+    }
 
     setError(null);
     setCurrentStepIndex(0);
@@ -400,6 +417,7 @@ function GenerationPreviewContent() {
 
             const parseResponse = await fetch('/api/extract-document', {
               method: 'POST',
+              headers: getAuditHeaders('generation'),
               body: parseFormData,
               signal,
             });
