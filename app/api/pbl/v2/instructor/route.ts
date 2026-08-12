@@ -23,6 +23,11 @@ import { createSSEResponse } from '@/lib/pbl/v2/api/sse';
 import { applyRequestLocaleToProject } from '@/lib/pbl/v2/api/locale';
 import { runInstructorTurn, type InstructorPhase } from '@/lib/pbl/v2/agents/instructor';
 import type { PBLProjectV2 } from '@/lib/pbl/v2/types';
+import {
+  recordAuditEvent,
+  withAuditedStreamRequest,
+  type AuditSpanHandle,
+} from '@/lib/observability/audit';
 
 export const maxDuration = 300;
 
@@ -36,6 +41,12 @@ interface InstructorRequest {
 }
 
 export async function POST(req: NextRequest) {
+  return withAuditedStreamRequest(req, { module: 'pbl', operation: 'pbl.instructor' }, (audit) =>
+    post(req, audit),
+  );
+}
+
+async function post(req: NextRequest, audit: AuditSpanHandle) {
   let body: InstructorRequest;
   try {
     body = (await req.json()) as InstructorRequest;
@@ -61,6 +72,9 @@ export async function POST(req: NextRequest) {
   const { model, thinkingConfig } = resolved;
   const phase = body.phase ?? 'instructing';
   applyRequestLocaleToProject(req, body.project);
+  recordAuditEvent('pbl.instructor.request', {
+    input: { project: body.project, userMessage: body.userMessage, phase },
+  });
 
   return createSSEResponse(
     runInstructorTurn({
@@ -71,6 +85,6 @@ export async function POST(req: NextRequest) {
       thinkingConfig,
       signal: req.signal,
     }),
-    { signal: req.signal },
+    { signal: req.signal, audit },
   );
 }

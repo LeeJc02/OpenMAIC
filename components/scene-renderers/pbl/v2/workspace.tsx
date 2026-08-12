@@ -32,6 +32,7 @@ import { useI18n } from '@/lib/hooks/use-i18n';
 import type { CSSProperties } from 'react';
 import { runOneStream, type StreamDisplayState, type StreamStatus } from './use-instructor-stream';
 import type { PBLProjectPatch } from '@/lib/pbl/v2/api/sse';
+import { beginAuditRun, getAuditHeaders } from '@/lib/observability/audit-client';
 
 interface Props {
   readonly project: PBLProjectV2;
@@ -144,10 +145,14 @@ export function PBLV2Workspace({
     async (action: 'enter_scenario' | 'continue_handover' | 'complete_act') => {
       if (sceneBusy) return;
       setSceneBusy(true);
+      beginAuditRun('pbl');
       try {
         const res = await fetch('/api/pbl/v2/task/update', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuditHeaders('pbl'),
+          },
           body: JSON.stringify({ project, action }),
         });
         if (!res.ok) return;
@@ -229,11 +234,15 @@ export function PBLV2Workspace({
   const handleCompleteTask = useCallback(async () => {
     if (taskBusy || instructorStreaming || submissionEvaluationStatus) return;
     setTaskBusy(true);
+    beginAuditRun('pbl');
     onInstructorStreamingChange(true);
     try {
       const res = await fetch('/api/pbl/v2/task/update', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuditHeaders('pbl'),
+        },
         body: JSON.stringify({ project, action: 'complete_pending_task' }),
       });
       if (!res.ok) return;

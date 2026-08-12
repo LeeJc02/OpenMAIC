@@ -50,6 +50,7 @@ import { normalizeProjectRuntime } from '@/lib/pbl/v2/operations/kernel/progress
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { createLogger } from '@/lib/logger';
 import { applyInstructorEvent } from './apply-instructor-event';
+import { beginAuditRun, getAuditHeaders } from '@/lib/observability/audit-client';
 
 const log = createLogger('PBL v2 InstructorStream');
 
@@ -61,6 +62,8 @@ interface RunOptions {
    *  before invoking `run` — passing the already-mutated project here
    *  avoids a stale-ref race between React render and the SSE fetch. */
   initialProject?: PBLProjectV2;
+  /** Reuse a run created by a preceding stateless project mutation. */
+  auditRunId?: string;
 }
 
 export type StreamStatus = 'idle' | 'instructor' | 'eval-task' | 'eval-milestone' | 'eval-final';
@@ -124,9 +127,10 @@ export function useInstructorStream(
   const runningRef = useRef(false);
 
   const run = useCallback(
-    async ({ endpoint, body, initialProject }: RunOptions) => {
+    async ({ endpoint, body, initialProject, auditRunId }: RunOptions) => {
       if (runningRef.current || streaming) return { ok: false, project: projectRef.current };
       runningRef.current = true;
+      beginAuditRun('pbl', auditRunId);
       setError(null);
       setDraftAssistant('');
       setStreamCommittedOutput(false);
@@ -292,6 +296,7 @@ export async function runOneStream(args: OneStreamArgs): Promise<PBLProjectV2> {
   const modelConfig = getCurrentModelConfig();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...getAuditHeaders('pbl'),
     'x-model': modelConfig.modelString,
     'x-api-key': modelConfig.apiKey,
   };

@@ -50,6 +50,7 @@ import { cn } from '@/lib/utils/cn';
 import { useInstructorStream, type StreamDisplayState } from './use-instructor-stream';
 import { instructorIntroText } from './instructor-intro';
 import { useI18n } from '@/lib/hooks/use-i18n';
+import { beginAuditRun, getAuditHeaders } from '@/lib/observability/audit-client';
 import { MarkdownText } from './markdown-text';
 import { TaskEvaluationCard } from './eval-cards/task-evaluation-card';
 import { MilestoneCard } from './eval-cards/milestone-card';
@@ -214,10 +215,14 @@ export function PBLV2Chat({
    */
   const handleContinueHandover = async () => {
     if (chatBusy) return;
+    const auditRunId = beginAuditRun('pbl');
     try {
       const res = await fetch('/api/pbl/v2/task/update', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuditHeaders('pbl'),
+        },
         body: JSON.stringify({ project, action: 'continue_handover' }),
       });
       if (!res.ok) {
@@ -249,6 +254,7 @@ export function PBLV2Chat({
           endpoint: '/api/pbl/v2/open-task',
           body: { phase: 'setup' },
           initialProject: nextProject,
+          auditRunId,
         });
       }
     } catch (e) {

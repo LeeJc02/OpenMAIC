@@ -39,6 +39,11 @@ import {
   runTaskEvaluation,
 } from '@/lib/pbl/v2/agents/evaluator';
 import type { PBLProjectV2 } from '@/lib/pbl/v2/types';
+import {
+  recordAuditEvent,
+  withAuditedStreamRequest,
+  type AuditSpanHandle,
+} from '@/lib/observability/audit';
 
 export const maxDuration = 300;
 
@@ -55,6 +60,12 @@ interface EvaluateRequest {
 }
 
 export async function POST(req: NextRequest) {
+  return withAuditedStreamRequest(req, { module: 'pbl', operation: 'pbl.evaluate' }, (audit) =>
+    post(req, audit),
+  );
+}
+
+async function post(req: NextRequest, audit: AuditSpanHandle) {
   let body: EvaluateRequest;
   try {
     body = (await req.json()) as EvaluateRequest;
@@ -88,6 +99,15 @@ export async function POST(req: NextRequest) {
   }
   const { model, thinkingConfig, modelInfo } = resolved;
   const hasVision = !!modelInfo?.capabilities?.vision;
+  recordAuditEvent('pbl.evaluate.request', {
+    input: {
+      project: body.project,
+      kind: body.kind,
+      milestoneId: body.milestoneId,
+      microtaskId: body.microtaskId,
+      recentChatSummary: body.recentChatSummary,
+    },
+  });
 
   if (body.kind === 'task') {
     return createSSEResponse(
@@ -101,7 +121,7 @@ export async function POST(req: NextRequest) {
         hasVision,
         signal: req.signal,
       }),
-      { signal: req.signal },
+      { signal: req.signal, audit },
     );
   }
   if (body.kind === 'milestone') {
@@ -114,7 +134,7 @@ export async function POST(req: NextRequest) {
         recentChatSummary: body.recentChatSummary,
         signal: req.signal,
       }),
-      { signal: req.signal },
+      { signal: req.signal, audit },
     );
   }
   // final
@@ -126,6 +146,6 @@ export async function POST(req: NextRequest) {
       recentChatSummary: body.recentChatSummary,
       signal: req.signal,
     }),
-    { signal: req.signal },
+    { signal: req.signal, audit },
   );
 }

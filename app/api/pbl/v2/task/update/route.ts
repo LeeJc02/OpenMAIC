@@ -33,6 +33,7 @@ import {
 } from '@/lib/pbl/v2/operations/kernel/progress';
 import type { PBLProjectV2 } from '@/lib/pbl/v2/types';
 import { currentPendingTaskCompletion } from '@/lib/pbl/v2/operations/kernel/task-completion';
+import { recordAuditEvent, withAuditedRequest } from '@/lib/observability/audit';
 
 interface UpdateRequest {
   project: PBLProjectV2;
@@ -46,6 +47,10 @@ interface UpdateRequest {
 }
 
 export async function POST(req: NextRequest) {
+  return withAuditedRequest(req, { module: 'pbl', operation: 'pbl.task-update' }, () => post(req));
+}
+
+async function post(req: NextRequest) {
   let body: UpdateRequest;
   try {
     body = (await req.json()) as UpdateRequest;
@@ -57,6 +62,9 @@ export async function POST(req: NextRequest) {
   }
 
   const project = body.project;
+  recordAuditEvent('pbl.task-update.request', {
+    input: { action: body.action, microtaskId: body.microtaskId, project },
+  });
 
   switch (body.action) {
     case 'start': {

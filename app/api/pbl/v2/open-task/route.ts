@@ -23,6 +23,11 @@ import { applyRequestLocaleToProject } from '@/lib/pbl/v2/api/locale';
 import { runInstructorTurn } from '@/lib/pbl/v2/agents/instructor';
 import { applyQuizSignalsToProject } from '@/lib/pbl/v2/operations/runtime/quiz-snapshot';
 import type { PBLProjectV2, PriorQuizResult } from '@/lib/pbl/v2/types';
+import {
+  recordAuditEvent,
+  withAuditedStreamRequest,
+  type AuditSpanHandle,
+} from '@/lib/observability/audit';
 
 export const maxDuration = 300;
 
@@ -38,6 +43,12 @@ interface OpenTaskRequest {
 }
 
 export async function POST(req: NextRequest) {
+  return withAuditedStreamRequest(req, { module: 'pbl', operation: 'pbl.open-task' }, (audit) =>
+    post(req, audit),
+  );
+}
+
+async function post(req: NextRequest, audit: AuditSpanHandle) {
   let body: OpenTaskRequest;
   try {
     body = (await req.json()) as OpenTaskRequest;
@@ -62,6 +73,9 @@ export async function POST(req: NextRequest) {
 
   const { model, thinkingConfig } = resolved;
   applyRequestLocaleToProject(req, body.project);
+  recordAuditEvent('pbl.open-task.request', {
+    input: { project: body.project, phase: body.phase, priorQuizResults: body.priorQuizResults },
+  });
 
   // Stage 2 (pre-play) recalibration: fold prior-quiz accuracy into
   // the adaptive engine before the Instructor turn runs. Only fires
@@ -88,6 +102,6 @@ export async function POST(req: NextRequest) {
       thinkingConfig,
       signal: req.signal,
     }),
-    { signal: req.signal },
+    { signal: req.signal, audit },
   );
 }

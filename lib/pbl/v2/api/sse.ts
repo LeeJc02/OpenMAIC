@@ -21,6 +21,8 @@ import type {
   PBLEngagementEvent,
   PBLRuntimeEvent,
 } from '../types';
+import { recordAuditEvent, type AuditSpanHandle } from '@/lib/observability/audit';
+import { AUDIT_RUN_HEADER } from '@/lib/observability/audit-types';
 
 // ---------------------------------------------------------------------------
 // Event types — discriminated union, shared between client and server
@@ -210,7 +212,7 @@ const HEARTBEAT = `: keepalive\n\n`;
  */
 export function createSSEResponse(
   generator: AsyncGenerator<PBLSSEEvent, void, void>,
-  options: { heartbeatMs?: number; signal?: AbortSignal } = {},
+  options: { heartbeatMs?: number; signal?: AbortSignal; audit?: AuditSpanHandle } = {},
 ): Response {
   const heartbeatMs = options.heartbeatMs ?? 15_000;
   const signal = options.signal;
@@ -240,6 +242,7 @@ export function createSSEResponse(
       if (signal) {
         if (signal.aborted) {
           safeClose();
+          options.audit?.end({ status: 'aborted', eventType: 'sse.aborted' });
           return;
         }
         signal.addEventListener('abort', onAbort, { once: true });
@@ -257,23 +260,36 @@ export function createSSEResponse(
 
       heartbeatHandle = setInterval(() => enqueueText(HEARTBEAT), heartbeatMs);
 
-      try {
-        for await (const event of generator) {
-          if (closed) break;
-          enqueueText(encodeEvent(event));
+      const consume = async () => {
+        try {
+          for await (const event of generator) {
+            if (closed) break;
+            if (event.type !== 'token') {
+              recordAuditEvent(`pbl.sse.${event.type}`, { output: event });
+            }
+            enqueueText(encodeEvent(event));
+          }
+        } catch (err) {
+          enqueueText(
+            encodeEvent({
+              type: 'error',
+              code: 'STREAM_ERROR',
+              message: err instanceof Error ? err.message : String(err),
+            }),
+          );
+          enqueueText(encodeEvent({ type: 'done' }));
+          options.audit?.end({ status: 'error', error: err, eventType: 'sse.error' });
+          return;
+        } finally {
+          safeClose();
         }
-      } catch (err) {
-        enqueueText(
-          encodeEvent({
-            type: 'error',
-            code: 'STREAM_ERROR',
-            message: err instanceof Error ? err.message : String(err),
-          }),
-        );
-        enqueueText(encodeEvent({ type: 'done' }));
-      } finally {
-        safeClose();
-      }
+        options.audit?.end({
+          status: signal?.aborted ? 'aborted' : 'completed',
+          eventType: signal?.aborted ? 'sse.aborted' : 'sse.completed',
+        });
+      };
+      const consumeWithAudit = options.audit ? options.audit.run(consume) : consume();
+      await consumeWithAudit;
     },
   });
 
@@ -284,6 +300,7 @@ export function createSSEResponse(
       Connection: 'keep-alive',
       // Disable Nginx response buffering for SSE through proxies.
       'X-Accel-Buffering': 'no',
+      ...(options.audit ? { [AUDIT_RUN_HEADER]: options.audit.context.auditRunId } : {}),
     },
   });
 }

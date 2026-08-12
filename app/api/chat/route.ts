@@ -20,6 +20,7 @@ import { apiError } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
 import { resolveModel } from '@/lib/server/resolve-model';
 import type { ThinkingConfig } from '@/lib/types/provider';
+import { withAuditedStreamRequest, type AuditSpanHandle } from '@/lib/observability/audit';
 const log = createLogger('Chat API');
 
 // Allow streaming responses up to 60 seconds
@@ -42,6 +43,14 @@ export const maxDuration = 60;
  * Response: SSE stream of StatelessEvent
  */
 export async function POST(req: NextRequest) {
+  return withAuditedStreamRequest(
+    req,
+    { module: 'langgraph', operation: 'chat.request' },
+    (audit) => post(req, audit),
+  );
+}
+
+async function post(req: NextRequest, audit: AuditSpanHandle) {
   const encoder = new TextEncoder();
   let chatModel: string | undefined;
   let chatMessageCount: number | undefined;
@@ -119,6 +128,7 @@ export async function POST(req: NextRequest) {
         }
       };
 
+      let streamError: unknown;
       try {
         startHeartbeat();
 
@@ -152,6 +162,7 @@ export async function POST(req: NextRequest) {
         stopHeartbeat();
         await writer.close();
       } catch (error) {
+        streamError = error;
         stopHeartbeat();
 
         // If aborted, just close the writer silently
@@ -183,6 +194,12 @@ export async function POST(req: NextRequest) {
         } catch {
           // Writer may already be closed
         }
+      } finally {
+        audit.end({
+          status: signal.aborted ? 'aborted' : streamError ? 'error' : 'completed',
+          eventType: signal.aborted ? 'sse.aborted' : streamError ? 'sse.error' : 'sse.completed',
+          ...(streamError ? { error: streamError } : {}),
+        });
       }
     })();
 

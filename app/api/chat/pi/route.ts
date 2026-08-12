@@ -21,6 +21,7 @@ import { apiError } from '@/lib/server/api-response';
 import type { ThinkingConfig } from '@/lib/types/provider';
 import type { StatelessChatRequest } from '@/lib/types/chat';
 
+import { withAuditedStreamRequest, type AuditSpanHandle } from '@/lib/observability/audit';
 const log = createLogger('Pi Chat API');
 
 export const maxDuration = 300;
@@ -30,6 +31,12 @@ export async function POST(req: NextRequest) {
     return apiError('INVALID_REQUEST', 404, 'Pi chat runtime is disabled');
   }
 
+  return withAuditedStreamRequest(req, { module: 'langgraph', operation: 'chat.pi' }, (audit) =>
+    post(req, audit),
+  );
+}
+
+async function post(req: NextRequest, audit: AuditSpanHandle) {
   const encoder = new TextEncoder();
   let chatModel: string | undefined;
   let chatMessageCount: number | undefined;
@@ -142,6 +149,7 @@ export async function POST(req: NextRequest) {
         }
       };
 
+      let streamError: unknown;
       try {
         startHeartbeat();
 
@@ -170,6 +178,7 @@ export async function POST(req: NextRequest) {
         stopHeartbeat();
         await writer.close();
       } catch (error) {
+        streamError = error;
         stopHeartbeat();
 
         if (signal.aborted) {
@@ -191,6 +200,12 @@ export async function POST(req: NextRequest) {
         } catch {
           /* writer may already be closed */
         }
+      } finally {
+        audit.end({
+          status: signal.aborted ? 'aborted' : streamError ? 'error' : 'completed',
+          eventType: signal.aborted ? 'sse.aborted' : streamError ? 'sse.error' : 'sse.completed',
+          ...(streamError ? { error: streamError } : {}),
+        });
       }
     })();
 

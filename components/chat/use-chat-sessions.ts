@@ -38,6 +38,7 @@ import { createLogger } from '@/lib/logger';
 import { isPiChatEnabled } from '@/lib/config/feature-flags';
 import type { CleanupSource } from '@/lib/playback/auto-resume';
 import { nanoid } from 'nanoid';
+import { beginAuditRun, getAuditHeaders } from '@/lib/observability/audit-client';
 
 const log = createLogger('ChatSessions');
 const SOFT_CLOSE_TIMEOUT_MS = 15_000;
@@ -339,11 +340,15 @@ export async function runPiSingleRequest(
   onStopSessionRef: { current?: ((payload: SessionCleanupPayload) => void) | undefined },
   t: (key: string) => string,
   onResponseAccepted?: () => void,
+  auditScope = 'chat',
 ): Promise<void> {
   const consumer = createConsumer(sessionId, controller, sessionType);
   const response = await fetch('/api/chat/pi', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuditHeaders(auditScope),
+    },
     body: JSON.stringify(requestTemplate),
     signal: controller.signal,
   });
@@ -1131,6 +1136,9 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
       controller: AbortController,
       sessionType: SessionType,
     ): Promise<void> => {
+      const auditScope = `chat:${sessionId}`;
+      beginAuditRun(auditScope);
+
       // Attach full configs for generated (non-default) agents so the server can use them.
       // The server-side registry only has default agents; generated agents exist only client-side.
       const generatedConfigs = requestTemplate.config.agentIds
@@ -1172,6 +1180,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
                 );
               }
             : undefined,
+          auditScope,
         );
         return;
       }
@@ -1199,7 +1208,10 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
           fetchChat: (body, signal) =>
             fetch('/api/chat', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                ...getAuditHeaders(auditScope),
+              },
               body: JSON.stringify(body),
               signal,
             }),

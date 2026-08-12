@@ -23,6 +23,11 @@ import { createSSEResponse } from '@/lib/pbl/v2/api/sse';
 import { applyRequestLocaleToProject } from '@/lib/pbl/v2/api/locale';
 import { runSimulatorTurn, type SimulatorPhase } from '@/lib/pbl/v2/agents/simulator';
 import type { PBLProjectV2 } from '@/lib/pbl/v2/types';
+import {
+  recordAuditEvent,
+  withAuditedStreamRequest,
+  type AuditSpanHandle,
+} from '@/lib/observability/audit';
 
 export const maxDuration = 300;
 
@@ -37,6 +42,12 @@ interface SimulatorRequest {
 }
 
 export async function POST(req: NextRequest) {
+  return withAuditedStreamRequest(req, { module: 'pbl', operation: 'pbl.simulator' }, (audit) =>
+    post(req, audit),
+  );
+}
+
+async function post(req: NextRequest, audit: AuditSpanHandle) {
   let body: SimulatorRequest;
   try {
     body = (await req.json()) as SimulatorRequest;
@@ -59,6 +70,9 @@ export async function POST(req: NextRequest) {
   const { model, thinkingConfig } = resolved;
   const phase: SimulatorPhase = body.phase === 'greeting' ? 'greeting' : 'instructing';
   applyRequestLocaleToProject(req, body.project);
+  recordAuditEvent('pbl.simulator.request', {
+    input: { project: body.project, userMessage: body.userMessage, phase },
+  });
 
   return createSSEResponse(
     runSimulatorTurn({
@@ -69,6 +83,6 @@ export async function POST(req: NextRequest) {
       thinkingConfig,
       signal: req.signal,
     }),
-    { signal: req.signal },
+    { signal: req.signal, audit },
   );
 }

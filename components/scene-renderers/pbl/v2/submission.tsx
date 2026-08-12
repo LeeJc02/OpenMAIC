@@ -85,6 +85,7 @@ import {
   isToleratedReactionStreamError,
   type StreamStatus,
 } from './use-instructor-stream';
+import { beginAuditRun, getAuditHeaders } from '@/lib/observability/audit-client';
 
 interface Props {
   readonly project: PBLProjectV2;
@@ -412,6 +413,7 @@ export function PBLV2SubmissionPanel({
     microtaskTitle: string,
   ) => {
     setEvaluating(true);
+    beginAuditRun('pbl');
     onInstructorStreamingChange?.(true);
     setEvalError(null);
     const statusStartedAt = new Date().toISOString();
@@ -452,6 +454,7 @@ export function PBLV2SubmissionPanel({
         });
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
+          ...getAuditHeaders('pbl'),
           'x-model': modelConfig.modelString || '',
           'x-api-key': modelConfig.apiKey || '',
         };
