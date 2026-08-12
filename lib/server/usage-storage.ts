@@ -36,6 +36,10 @@ export interface UsageRecordInput {
   quantity?: number;
   /** Unit for `quantity`. */
   unit?: UsageUnit;
+  /** Optional audit correlation fields. */
+  auditRunId?: string;
+  traceId?: string;
+  spanId?: string;
 }
 
 /** A persisted usage row — pure usage, no cost. */
@@ -56,6 +60,9 @@ export interface UsageRecord {
   // Non-token usage (e.g. image count, video seconds, TTS characters).
   quantity?: number;
   unit?: UsageUnit;
+  auditRunId?: string;
+  traceId?: string;
+  spanId?: string;
 }
 
 interface RecordOptions {
@@ -125,6 +132,9 @@ export async function recordUsage(
       reasoningTokens: usage.reasoningTokens,
       ...(input.quantity != null ? { quantity: input.quantity } : {}),
       ...(input.unit ? { unit: input.unit } : {}),
+      ...(input.auditRunId ? { auditRunId: input.auditRunId } : {}),
+      ...(input.traceId ? { traceId: input.traceId } : {}),
+      ...(input.spanId ? { spanId: input.spanId } : {}),
     };
 
     const dir = usageDir(opts.baseDir);
