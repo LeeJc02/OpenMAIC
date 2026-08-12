@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-const runIdArg = process.argv.find((arg) => !arg.startsWith('-'));
+const runIdArg = process.argv.slice(2).find((arg) => !arg.startsWith('-'));
 const rootDir = path.resolve(
   process.env.OPENMAIC_AUDIT_TRACE_DIR || path.join(process.cwd(), 'data', 'audit-traces'),
 );
