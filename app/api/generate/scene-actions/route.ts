@@ -30,7 +30,7 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { llmApiError } from '@/lib/server/llm-error-response';
 import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 
-import { withAuditedRequest } from '@/lib/observability/audit';
+import { recordAuditEvent, withAuditedRequest } from '@/lib/observability/audit';
 
 const log = createLogger('Scene Actions API');
 
@@ -189,6 +189,45 @@ async function post(req: NextRequest) {
     const outputPreviousSpeeches = (scene.actions || [])
       .filter((a): a is SpeechAction => a.type === 'speech')
       .map((a) => a.text);
+
+    recordAuditEvent('generation.scene-actions.completed', {
+      input: {
+        phase: 'actions',
+        outline: {
+          id: outline.id,
+          title: outline.title,
+          type: outline.type,
+          order: outline.order,
+        },
+        totalScenes: allOutlines.length,
+        contentType: outline.type,
+        previousSpeechCount: incomingPreviousSpeeches?.length ?? 0,
+      },
+      output: { scene, previousSpeeches: outputPreviousSpeeches },
+      stateBefore: {
+        phase: 'actions-requested',
+        outlineId: outline.id,
+        sceneOrder: outline.order,
+        totalScenes: allOutlines.length,
+        contentType: outline.type,
+      },
+      stateAfter: {
+        phase: 'scene-assembled',
+        outlineId: outline.id,
+        sceneId: scene.id,
+        sceneOrder: outline.order,
+        totalScenes: allOutlines.length,
+        actionCount: scene.actions?.length ?? 0,
+        speechCount: outputPreviousSpeeches.length,
+      },
+      attributes: {
+        sceneTitle: outline.title,
+        stageId,
+        outlineId: outline.id,
+        sceneOrder: outline.order,
+        totalScenes: allOutlines.length,
+      },
+    });
 
     log.info(
       `Scene assembled successfully: "${outline.title}" — ${scene.actions?.length ?? 0} actions`,

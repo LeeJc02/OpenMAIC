@@ -28,7 +28,7 @@ import { resolveVocationalActive } from '@/lib/config/feature-flags';
 import { sortDocumentImagesForVision } from '@/lib/document/bundle';
 import { generatePBLV2Project } from '@/lib/pbl/v2/agents/planner';
 
-import { withAuditedRequest } from '@/lib/observability/audit';
+import { recordAuditEvent, withAuditedRequest } from '@/lib/observability/audit';
 
 const log = createLogger('Scene Content API');
 
@@ -206,6 +206,46 @@ async function post(req: NextRequest) {
         `Failed to generate content: ${effectiveOutline.title}`,
       );
     }
+
+    recordAuditEvent('generation.scene-content.completed', {
+      input: {
+        phase: 'content',
+        outline: {
+          id: effectiveOutline.id,
+          title: effectiveOutline.title,
+          type: effectiveOutline.type,
+          order: effectiveOutline.order,
+        },
+        totalScenes: allOutlines.length,
+        assignedImageCount: assignedImages?.length ?? 0,
+        visionEnabled: hasVision,
+        languageDirectivePresent: Boolean(languageDirective),
+      },
+      output: { content, effectiveOutline },
+      stateBefore: {
+        phase: 'content-requested',
+        outlineId: effectiveOutline.id,
+        sceneOrder: effectiveOutline.order,
+        totalScenes: allOutlines.length,
+      },
+      stateAfter: {
+        phase: 'content-normalized',
+        outlineId: effectiveOutline.id,
+        sceneOrder: effectiveOutline.order,
+        totalScenes: allOutlines.length,
+        contentType: effectiveOutline.type,
+        elementCount: 'elements' in content ? content.elements.length : undefined,
+        questionCount: 'questions' in content ? content.questions.length : undefined,
+        hasInteractiveHtml: 'html' in content ? Boolean(content.html) : undefined,
+      },
+      attributes: {
+        sceneTitle: effectiveOutline.title,
+        stageId,
+        outlineId: effectiveOutline.id,
+        sceneOrder: effectiveOutline.order,
+        totalScenes: allOutlines.length,
+      },
+    });
 
     log.info(`Content generated successfully: "${effectiveOutline.title}"`);
 

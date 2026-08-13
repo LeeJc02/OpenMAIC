@@ -5,7 +5,14 @@ import {
   getAuditHeaders,
   mergeAuditHeaders,
 } from '@/lib/observability/audit-client';
-import { AUDIT_RUN_HEADER, isValidAuditRunId } from '@/lib/observability/audit-types';
+import {
+  AUDIT_RUN_HEADER,
+  AUDIT_SCENE_ORDER_HEADER,
+  AUDIT_SCENE_OUTLINE_HEADER,
+  AUDIT_SCENE_STAGE_HEADER,
+  AUDIT_SCENE_TOTAL_HEADER,
+  isValidAuditRunId,
+} from '@/lib/observability/audit-types';
 
 function createStorage() {
   const values = new Map<string, string>();
@@ -43,5 +50,26 @@ describe('audit client propagation', () => {
 
     clearAuditRun('generation');
     expect(getAuditHeaders('generation')[AUDIT_RUN_HEADER]).not.toBe(runId);
+  });
+
+  it('propagates scene identity and position with generation headers', () => {
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: createStorage(),
+    });
+
+    const headers = mergeAuditHeaders({ 'x-test': '1' }, 'generation', 2, {
+      stageId: 'stage-1',
+      outlineId: 'outline-7',
+      sceneOrder: 7,
+      totalScenes: 10,
+    });
+
+    expect(headers).toMatchObject({
+      [AUDIT_SCENE_STAGE_HEADER]: 'stage-1',
+      [AUDIT_SCENE_OUTLINE_HEADER]: 'outline-7',
+      [AUDIT_SCENE_ORDER_HEADER]: '7',
+      [AUDIT_SCENE_TOTAL_HEADER]: '10',
+    });
   });
 });

@@ -12,6 +12,10 @@ import { appendAuditEvent } from './audit-sink';
 import {
   AUDIT_ATTEMPT_HEADER,
   AUDIT_RUN_HEADER,
+  AUDIT_SCENE_ORDER_HEADER,
+  AUDIT_SCENE_OUTLINE_HEADER,
+  AUDIT_SCENE_STAGE_HEADER,
+  AUDIT_SCENE_TOTAL_HEADER,
   createAuditRunId,
   isValidAuditRunId,
   type AuditAttribute,
@@ -341,6 +345,22 @@ export function auditAttempt(req: { headers?: AuditRequestHeaders }): number | u
   return Number.isInteger(attempt) && attempt > 0 ? attempt : undefined;
 }
 
+function auditSceneContext(req: { headers?: AuditRequestHeaders }): Partial<AuditContext> {
+  const headers = requestHeaders(req);
+  const sceneOrder = Number(headers.get(AUDIT_SCENE_ORDER_HEADER));
+  const totalScenes = Number(headers.get(AUDIT_SCENE_TOTAL_HEADER));
+  return {
+    ...(headers.get(AUDIT_SCENE_STAGE_HEADER)?.trim()
+      ? { stageId: headers.get(AUDIT_SCENE_STAGE_HEADER)!.trim().slice(0, 128) }
+      : {}),
+    ...(headers.get(AUDIT_SCENE_OUTLINE_HEADER)?.trim()
+      ? { outlineId: headers.get(AUDIT_SCENE_OUTLINE_HEADER)!.trim().slice(0, 128) }
+      : {}),
+    ...(Number.isInteger(sceneOrder) && sceneOrder > 0 ? { sceneOrder } : {}),
+    ...(Number.isInteger(totalScenes) && totalScenes > 0 ? { totalScenes } : {}),
+  };
+}
+
 export function startAuditRequest(
   req: { headers?: AuditRequestHeaders },
   options: AuditRequestOptions,
@@ -352,6 +372,7 @@ export function startAuditRequest(
     node: options.node ?? 'request',
     context: {
       ...options.context,
+      ...auditSceneContext(req),
       auditRunId,
       module: options.module,
       operation: options.operation,

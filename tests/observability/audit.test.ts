@@ -7,8 +7,18 @@ import {
   readAuditEvents,
   sanitizeAuditValue,
 } from '@/lib/observability/audit-sink';
-import { hashAuditPayload, recordAuditEvent, startAuditSpan } from '@/lib/observability/audit';
-import { createAuditRunId, isValidAuditRunId } from '@/lib/observability/audit-types';
+import {
+  auditRequestId,
+  hashAuditPayload,
+  recordAuditEvent,
+  startAuditRequest,
+  startAuditSpan,
+} from '@/lib/observability/audit';
+import {
+  AUDIT_SCENE_ORDER_HEADER,
+  createAuditRunId,
+  isValidAuditRunId,
+} from '@/lib/observability/audit-types';
 import { createSSEResponse } from '@/lib/pbl/v2/api/sse';
 import type { PBLSSEEvent } from '@/lib/pbl/v2/api/sse';
 
@@ -111,5 +121,34 @@ describe('audit trace', () => {
     expect(body).toContain('event: done');
     expect(traceEvents.some((event) => event.eventType === 'pbl.sse.done')).toBe(true);
     expect(traceEvents.some((event) => event.eventType === 'sse.completed')).toBe(true);
+  });
+
+  it('attaches scene metadata from request headers to every event in the request', async () => {
+    const auditRunId = 'audit_scene_context';
+    const request = {
+      headers: new Headers({
+        'x-openmaic-audit-run-id': auditRunId,
+        'x-openmaic-audit-stage-id': 'stage-1',
+        'x-openmaic-audit-outline-id': 'outline-7',
+        [AUDIT_SCENE_ORDER_HEADER]: '7',
+        'x-openmaic-audit-scene-total': '10',
+      }),
+    };
+
+    expect(auditRequestId(request)).toBe(auditRunId);
+    const audit = startAuditRequest(request, {
+      module: 'generation',
+      operation: 'generation.scene-content',
+    });
+    audit.end({ eventType: 'http.completed' });
+
+    await flushAuditEvents(auditRunId);
+    const [event] = await readAuditEvents(auditRunId);
+    expect(event.attributes).toMatchObject({
+      stageId: 'stage-1',
+      outlineId: 'outline-7',
+      sceneOrder: 7,
+      totalScenes: 10,
+    });
   });
 });

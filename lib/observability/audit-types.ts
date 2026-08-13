@@ -2,6 +2,10 @@
 
 export const AUDIT_RUN_HEADER = 'x-openmaic-audit-run-id';
 export const AUDIT_ATTEMPT_HEADER = 'x-openmaic-audit-attempt';
+export const AUDIT_SCENE_STAGE_HEADER = 'x-openmaic-audit-stage-id';
+export const AUDIT_SCENE_OUTLINE_HEADER = 'x-openmaic-audit-outline-id';
+export const AUDIT_SCENE_ORDER_HEADER = 'x-openmaic-audit-scene-order';
+export const AUDIT_SCENE_TOTAL_HEADER = 'x-openmaic-audit-scene-total';
 
 export type AuditModule = 'generation' | 'langgraph' | 'pbl' | 'external';
 
@@ -25,7 +29,15 @@ export interface AuditContext {
   attempt?: number;
   promptId?: string;
   promptVersion?: string;
+  sceneOrder?: number;
+  totalScenes?: number;
+  sceneTitle?: string;
 }
+
+export type AuditSceneMetadata = Pick<
+  AuditContext,
+  'stageId' | 'outlineId' | 'sceneOrder' | 'totalScenes'
+>;
 
 export interface AuditEvent {
   schemaVersion: 1;

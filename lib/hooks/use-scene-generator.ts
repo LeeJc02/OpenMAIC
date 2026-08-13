@@ -33,6 +33,7 @@ import {
   type GenerationRetryOptions,
 } from '@openmaic/generation';
 import { mergeAuditHeaders, getAuditHeaders } from '@/lib/observability/audit-client';
+import type { AuditSceneMetadata } from '@/lib/observability/audit-types';
 
 const log = createLogger('SceneGenerator');
 
@@ -72,7 +73,20 @@ type ClientRetryOptions<T> = Partial<
   Omit<GenerationRetryOptions<T>, 'label' | 'shouldRetryResult' | 'signal'>
 >;
 
-function getApiHeaders(attempt?: number): HeadersInit {
+function getSceneAuditMetadata(
+  outline: SceneOutline,
+  stageId: string,
+  totalScenes: number,
+): AuditSceneMetadata {
+  return {
+    stageId,
+    outlineId: outline.id,
+    sceneOrder: outline.order,
+    totalScenes,
+  };
+}
+
+function getApiHeaders(attempt?: number, scene?: AuditSceneMetadata): HeadersInit {
   const config = getCurrentModelConfig();
   const settings = useSettingsStore.getState();
   const imageProviderConfig = settings.imageProvidersConfig?.[settings.imageProviderId];
@@ -101,6 +115,7 @@ function getApiHeaders(attempt?: number): HeadersInit {
     },
     'generation',
     attempt,
+    scene,
   );
 }
 
@@ -173,7 +188,10 @@ export async function fetchSceneContent(
       async (attempt) => {
         const response = await fetch('/api/generate/scene-content', {
           method: 'POST',
-          headers: getApiHeaders(attempt),
+          headers: getApiHeaders(
+            attempt,
+            getSceneAuditMetadata(params.outline, params.stageId, params.allOutlines.length),
+          ),
           body: JSON.stringify(withThinkingConfig(params)),
           signal,
         });
@@ -222,7 +240,10 @@ export async function fetchSceneActions(
       async (attempt) => {
         const response = await fetch('/api/generate/scene-actions', {
           method: 'POST',
-          headers: getApiHeaders(attempt),
+          headers: getApiHeaders(
+            attempt,
+            getSceneAuditMetadata(params.outline, params.stageId, params.allOutlines.length),
+          ),
           body: JSON.stringify(withThinkingConfig(params)),
           signal,
         });
